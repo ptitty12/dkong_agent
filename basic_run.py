@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 import subprocess
-
+from sk_env import DonkeyKongEnv
 
 # Paths
 mame_path = r"C:\Users\Patrick Taylor\Emulation\mame"
@@ -39,6 +39,9 @@ class DonkeyKongController:
         self.mame_process = None
         self.current_frame = 0
         self.last_state = None
+        self.expected_frame = 0  # Track what frame we expect to see
+
+
 
     def start_mame(self):
         """Launch MAME with the Lua script"""
@@ -89,8 +92,14 @@ class DonkeyKongController:
                     except ValueError:
                         continue
                         
-            # Update current frame
-            self.current_frame = state.get('Frame', 0)
+            # Update frames
+            frame = state.get('Frame', 0)
+            # Only report actual sync issues (not expected 10-frame jumps)
+            if frame != self.expected_frame and abs(frame - self.expected_frame) != 10:
+                print(f"Frame sync issue - Expected: {self.expected_frame}, Got: {frame}")
+            self.expected_frame = frame
+            
+            self.current_frame = frame
             self.last_state = state
             return state
         except Exception as e:
@@ -115,9 +124,9 @@ class DonkeyKongController:
             self.mame_process.terminate()
             
         # Clean up files
-        for file in [self.state_file, self.command_file, self.status_file]:
-            if file.exists():
-                file.unlink()
+        #for file in [self.state_file, self.command_file, self.status_file]:
+            #Eif file.exists():
+                #file.unlink()
 
 def test_controller():
     """Test the controller functionality"""
@@ -128,27 +137,25 @@ def test_controller():
         controller.start_mame()
         
         print("Running test sequence...")
-        frame = 0
         for _ in range(5000):  
             state = controller.read_state()
             if state:
-                frame += 1
-                #print(f"Frame: {state.get('Frame', 0)} Mario pos: ({state.get('Mario_X', 0)}, {state.get('Mario_Y', 0)})")
+                print(f"Python frame: {controller.expected_frame}, MAME frame: {state.get('Frame', 0)}")
                 
                 # Test different movement patterns
-                if frame % 100 < 20:  # Right for 20 frames
+                if controller.expected_frame % 100 < 20:  # Right for 20 frames
                     action = 1  # Right
-                elif frame % 100 < 40:  # Left for 20 frames
+                elif controller.expected_frame % 100 < 40:  # Left for 20 frames
                     action = 2  # Left
-                elif frame % 100 < 50:  # Jump for 10 frames
+                elif controller.expected_frame % 100 < 50:  # Jump for 10 frames
                     action = 5  # Jump
-                elif frame % 100 < 65:  # Right+Jump for 15 frames
+                elif controller.expected_frame % 100 < 65:  # Right+Jump for 15 frames
                     action = 6  # Right+Jump
-                elif frame % 100 < 80:  # Left+Jump for 15 frames
+                elif controller.expected_frame % 100 < 80:  # Left+Jump for 15 frames
                     action = 7  # Left+Jump
-                elif frame % 100 < 90:  # Up for 10 frames
+                elif controller.expected_frame % 100 < 90:  # Up for 10 frames
                     action = 3  # Up
-                elif frame % 100 < 100:  # Down for 10 frames
+                elif controller.expected_frame % 100 < 100:  # Down for 10 frames
                     action = 4  # Down
                 
                 controller.send_action(action)
@@ -160,8 +167,36 @@ def test_controller():
     finally:
         controller.close()
 
-if __name__ == "__main__":
-    test_controller()
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_util import make_vec_env
+import os
+import time
+from sk_env import DonkeyKongEnv
+from stable_baselines3 import PPO
+from stable_baselines3.common.env_util import make_vec_env
 
 if __name__ == "__main__":
-    test_controller()
+    controller = DonkeyKongController()
+    controller.start_mame()
+
+    # Create the environment
+    vec_env = make_vec_env(lambda: DonkeyKongEnv(controller), n_envs=1)
+
+    # Initialize PPO with MultiInputPolicy
+    model = PPO("MultiInputPolicy", vec_env, verbose=1)
+
+    start_time = time.time()
+    model.learn(total_timesteps=108000)
+    end_time = time.time()
+    print(f"Training took {end_time - start_time:.2f} seconds")
+    model.save("ppo_donkey_kong")
+
+    # Test the agent
+    obs = vec_env.reset()
+    for _ in range(1000):
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, truncated, info = vec_env.step(action)
+        if done:
+            obs = vec_env.reset()
+
+

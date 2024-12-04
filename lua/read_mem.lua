@@ -25,6 +25,8 @@ local barrel_addresses = {0x6700, 0x6720, 0x6740, 0x6760, 0x6780, 0x67A0, 0x67C0
 -- Initialize counters and state
 local frame_counter = 0
 local skip_active = false
+local death_frame = 0
+local death_cooldown = 30
 
 function write_status(status)
     local file = io.open(status_file_path, "w")
@@ -107,6 +109,17 @@ end)
 emu.register_frame_done(function()
     frame_counter = frame_counter + 1
     
+    -- Check for death and manage lives
+    if mem:read_u8(0x6228) < 3 then
+        if death_frame == 0 then  -- Just died
+            death_frame = frame_counter  -- Mark when death occurred
+        elseif (frame_counter - death_frame) >= death_cooldown then
+            -- Wait period is over, reset lives
+            mem:write_u8(0x6228, 3)
+            death_frame = 0  -- Reset death frame counter
+        end
+    end
+    
     -- Apply command from Python
     local action = read_command()
     apply_command(action)
@@ -154,8 +167,6 @@ emu.register_frame_done(function()
             
             -- Update status
             write_status("RUNNING:" .. frame_counter)
-        else 
-            print('failed to open for writting')
         end
     end
     
