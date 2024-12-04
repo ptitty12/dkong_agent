@@ -4,19 +4,72 @@ local mem = cpu.spaces["program"]
 local ioport = manager.machine.ioport
 local screen = manager.machine.screens[":screen"]
 
--- Get start button
+-- Get input ports
 local in2 = ioport.ports[":IN2"]
+local in0 = ioport.ports[":IN0"]
 local start_button = in2.fields["1 Player Start"]
+local move_right = in0.fields["P1 Right"]
+local move_left = in0.fields["P1 Left"]
+local move_up = in0.fields["P1 Up"]
+local move_down = in0.fields["P1 Down"]
+local move_jump = in0.fields["P1 Button 1"]
 
--- File path for state output
-local log_file_path = "C:\\Users\\Patrick Taylor\\PycharmProjects\\dk2\\state_log.txt"
+-- File paths
+local state_file_path = "C:\\Users\\Patrick Taylor\\PycharmProjects\\dk2\\state_log.txt"
+local command_file_path = "C:\\Users\\Patrick Taylor\\PycharmProjects\\dk2\\command.txt"
+local status_file_path = "C:\\Users\\Patrick Taylor\\PycharmProjects\\dk2\\mame_status.txt"
 
 -- Barrel base addresses
 local barrel_addresses = {0x6700, 0x6720, 0x6740, 0x6760, 0x6780, 0x67A0, 0x67C0, 0x67E0}
 
--- Initialize frame counter and state tracking
+-- Initialize counters and state
 local frame_counter = 0
 local skip_active = false
+
+function write_status(status)
+    local file = io.open(status_file_path, "w")
+    if file then
+        file:write(status)
+        file:close()
+    end
+end
+
+function read_command()
+    local file = io.open(command_file_path, "r")
+    if not file then return 0 end
+    
+    local action = tonumber(file:read("*line")) or 0
+    file:close()
+    return action
+end
+
+function apply_command(action)
+    -- Reset all inputs
+    move_right:set_value(0)
+    move_left:set_value(0)
+    move_up:set_value(0)
+    move_down:set_value(0)
+    move_jump:set_value(0)
+    
+    -- Apply new action
+    if action == 1 then  -- Right
+        move_right:set_value(1)
+    elseif action == 2 then  -- Left
+        move_left:set_value(1)
+    elseif action == 3 then  -- Up
+        move_up:set_value(1)
+    elseif action == 4 then  -- Down
+        move_down:set_value(1)
+    elseif action == 5 then  -- Jump
+        move_jump:set_value(1)
+    elseif action == 6 then  -- Right+Jump
+        move_right:set_value(1)
+        move_jump:set_value(1)
+    elseif action == 7 then  -- Left+Jump
+        move_left:set_value(1)
+        move_jump:set_value(1)
+    end
+end
 
 function start_game()
     -- Press start button
@@ -40,14 +93,13 @@ function start_game()
     end
 end
 
--- Use the new notifier syntax
+-- Initialize on startup
 emu.add_machine_reset_notifier(function()
-    -- Clear the log file at start
-    local file = io.open(log_file_path, "w")
+    local file = io.open(state_file_path, "w")
     if file then
         file:close()
     end
-    -- Start the game
+    write_status("STARTING")
     start_game()
 end)
 
@@ -55,14 +107,15 @@ end)
 emu.register_frame_done(function()
     frame_counter = frame_counter + 1
     
-    -- Continue checking for skip opportunities
-    start_game()
+    -- Apply command from Python
+    local action = read_command()
+    apply_command(action)
     
     -- Log every 10 frames
     if frame_counter % 10 == 0 then
-        local file = io.open(log_file_path, "a")
+        local file = io.open(state_file_path, "w")  -- Use "w" instead of "a" to avoid growing file
         if file then
-            -- Write frame number
+            -- Add frame number first
             file:write("Frame: " .. frame_counter .. "\n")
             
             -- Mario state
@@ -96,8 +149,13 @@ emu.register_frame_done(function()
                 end
             end
             
-            file:write("\n")  -- Blank line between frames
+            file:write("\n")
             file:close()
+            
+            -- Update status
+            write_status("RUNNING:" .. frame_counter)
+        else 
+            print('failed to open for writting')
         end
     end
     
